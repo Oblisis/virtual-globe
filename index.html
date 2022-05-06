@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<meta charset="utf-8">
+	<title>Virtual Globe</title>
+	<style>
+		body {
+			margin: 0;
+		}
+	</style>
+</head>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.0.0/satellite.min.js"></script>
+
+<body>
+	<script type="importmap">
+		{
+		  "imports": {
+			"three": "https://unpkg.com/three@0.139.2/build/three.module.js"
+		  }
+		}
+	</script>
+
+
+	<script type="module">
+		import * as THREE from 'three';
+		import { OrbitControls } from 'https://unpkg.com/three@0.139.2/examples/jsm/controls/OrbitControls.js';
+		import { GUI } from 'https://unpkg.com/three@0.139.2/examples/jsm/libs/lil-gui.module.min.js';
+		import { ImprovedNoise } from 'https://unpkg.com/three@0.139.2/examples/jsm/math/ImprovedNoise.js';
+		import { GraticulePlane } from './js/GraticulePlane.js';
+
+		let camera, scene, renderer, controls, startTime, object, stats, cameraControls, geometry, pointObject, trajectory, trajectoryObject;
+		let satellites = [];
+
+		init();
+		animate();
+
+		function init() {
+
+			const currentTime = new Date();
+
+			camera = new THREE.PerspectiveCamera(36, window.innerWidth / window.innerHeight, 0.25, 10000);
+
+			camera.position.set(0, 0, 500);
+
+			scene = new THREE.Scene();
+			// scene.background = new THREE.Color("rgb(7,14,50)");
+			scene.background = new THREE.Color("rgb(5, 10, 38)");
+
+			// Lights
+
+			scene.add(new THREE.AmbientLight(0x505050));
+
+			const light = new THREE.AmbientLight(0x404040); // soft white light
+			scene.add(light);
+
+			const spotLight = new THREE.SpotLight(0xffffff);
+			spotLight.angle = Math.PI / 5;
+			spotLight.penumbra = 0.2;
+			spotLight.position.set(2, 500, 500);
+			spotLight.castShadow = true;
+			spotLight.shadow.camera.near = 3;
+			spotLight.shadow.camera.far = 10;
+			spotLight.shadow.mapSize.width = 1024;
+			spotLight.shadow.mapSize.height = 1024;
+			scene.add(spotLight);
+
+			const dirLight = new THREE.DirectionalLight(0x55505a, 1);
+			dirLight.position.set(0, 3, 0);
+			dirLight.castShadow = true;
+			dirLight.shadow.camera.near = 1;
+			dirLight.shadow.camera.far = 10;
+
+			dirLight.shadow.camera.right = 1;
+			dirLight.shadow.camera.left = - 1;
+			dirLight.shadow.camera.top = 1;
+			dirLight.shadow.camera.bottom = - 1;
+
+			dirLight.shadow.mapSize.width = 1024;
+			dirLight.shadow.mapSize.height = 1024;
+			scene.add(dirLight);
+
+
+			// Geometry
+			const earthTexture = new THREE.TextureLoader().load("textures/8081_earthmap10k.jpg");
+			const earthBumpMap = new THREE.TextureLoader().load("textures/8081_earthbump10k.jpg");
+			const earthSpecularMap = new THREE.TextureLoader().load("textures/8081_earthspec10k.jpg");
+
+			const material = new THREE.MeshPhongMaterial({
+				// color: "rgb(1,9,56)",
+				// color: "rgb(10,63,161)",
+				shininess: 70,
+				side: THREE.DoubleSide,
+				map: earthTexture,
+				bumpMap: earthBumpMap,
+				bumpScale: 1,
+				specularMap: earthSpecularMap,
+			});
+
+			let sphereRadius = 100;
+			let widthSegments = 64;
+			let heightSegments = 64;
+
+			geometry = new THREE.SphereGeometry(sphereRadius, widthSegments, heightSegments);
+
+			object = new THREE.Mesh(geometry, material);
+			// object.castShadow = true;
+			scene.add(object);
+
+			const overlayMaterial = new THREE.MeshPhongMaterial({
+				// color: "rgb(1,9,56)",
+				color: "rgb(10,63,161)",
+				transparent: true,
+				opacity: 0.7,
+				side: THREE.DoubleSide,
+			});
+			const overlayGeometry = new THREE.SphereGeometry(sphereRadius + sphereRadius * 0.01, widthSegments, heightSegments);
+			const overlayObject = new THREE.Mesh(overlayGeometry, overlayMaterial);
+			overlayObject.renderOrder = -2;
+			object.add(overlayObject);
+
+			const points = [
+
+				{
+					"lat": 37.3861,
+					"lon": -122.0839,
+					"name": "Mountain View, CA"
+				}
+
+			]
+
+
+			const shape = new THREE.Shape();
+			const x = 0;
+			const y = 0;
+
+			const pointSize = 0.5
+			shape.moveTo(x - pointSize, y - pointSize);
+			shape.lineTo(x + pointSize, y - pointSize);
+			shape.lineTo(x, y + pointSize);
+
+			const pointGeometry = new THREE.ShapeGeometry(shape);
+
+			const pointMaterial = new THREE.MeshBasicMaterial({
+				color: "rgb(255,179,2)",
+				side: THREE.DoubleSide,
+				transparent: false,
+				opacity: 0.2
+			});
+
+			const trajMaterial = new THREE.LineBasicMaterial({
+				color: "rgb(230, 173, 94)",
+				transparent: true,
+				opacity: 0.2,
+				linewidth: 1
+			});
+
+			const loader = new THREE.FileLoader();
+
+			loader.load(
+				'./data/elsets.txt',
+				function (data) {
+					// Load records
+					const records = data.split(/\r\n/);
+					for (let i = 0; i < records.length; i += 2) {
+						const satrec = satellite.twoline2satrec(records[i], records[i + 1])
+						const obj = new THREE.Mesh(pointGeometry, pointMaterial);
+						satellites.push({
+							satrec: satrec,
+							object: obj,
+							trajectoryObject: null
+						});
+						object.add(obj);
+					}
+
+					// Trajectory
+					for (let j = 0; j < satellites.length; j++) {
+						const trajectory = [];
+						const rec = satellites[j].satrec;
+						for (let i = 0; i < 90; i++) {
+							const offsetDate = new Date();
+							offsetDate.setTime(currentTime.getTime() + i * 60000);
+							const pt = propagate(rec, offsetDate);
+							trajectory.push(pt);
+						}
+						const trajGeometry = new THREE.BufferGeometry().setFromPoints(trajectory);
+
+						const trajectoryObject = new THREE.Line(trajGeometry, trajMaterial);
+						satellites[j].trajectoryObject = trajectoryObject;
+						trajectoryObject.renderOrder = -1;
+						trajectoryObject.visible = false;
+						object.add(trajectoryObject);
+					}
+
+				}
+			)
+
+
+			// Graticule
+			const graticule = new GraticulePlane(
+				1, // Scale
+				64, // Resolution
+				110, // Min Radius
+				1000, // Max Radius
+				4, // Radial Segments
+				8, // Theta Segments
+				"rgb(10,63,161)",  // Plane color
+				0.05,  // Plane Opacity
+				"rgb(71, 94, 255)",  // Edge Color
+				0.2); // Edge Opacity
+			object.add(graticule);
+
+
+			// Renderer
+			renderer = new THREE.WebGLRenderer();
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			window.addEventListener('resize', onWindowResize);
+			document.body.appendChild(renderer.domElement);
+
+			// Controls
+			controls = new OrbitControls(camera, renderer.domElement);
+			controls.enableDamping = true;
+			controls.dampingFactor = 0.1;
+			controls.autoRotate = true;
+			controls.autoRotateSpeed = -0.1;
+			controls.target.set(0, 0, 0);
+			controls.update();
+
+			// GUI
+			const trajectoryControls = {
+				visible: false
+			}
+
+			function updateTrajectories() {
+				for (let i = 0; i < satellites.length; i++) {
+					const sat = satellites[i];
+					sat.trajectoryObject.visible = trajectoryControls.visible
+				}
+			}
+
+
+			const gui = new GUI();
+
+			const folderOverlay = gui.addFolder('Overlay');
+			folderOverlay.add(overlayObject, 'visible').name("Visible");
+			folderOverlay.addColor(overlayMaterial, 'color').name("Color");
+			folderOverlay.add(overlayMaterial, 'opacity', 0, 1).name("Opacity");
+
+			const folderGraticule = gui.addFolder('Graticule');
+			folderGraticule.add(graticule, 'visible').name("Visible");
+			folderGraticule.addColor(graticule.planeMaterial, 'color').name("Plane Color");
+			folderGraticule.add(graticule.planeMaterial, 'opacity', 0, 1).name("Plane Opacity");
+			folderGraticule.addColor(graticule.edgeMaterial, 'color').name("Edge Color");
+			folderGraticule.add(graticule.edgeMaterial, 'opacity', 0, 1).name("Edge Opacity");
+
+			const folderTrajectory = gui.addFolder('Trajectories');
+			folderTrajectory.add(trajectoryControls, 'visible').name("Visible").onChange(updateTrajectories);
+			folderTrajectory.addColor(trajMaterial, 'color').name("Color");
+
+			const folderPoints = gui.addFolder('Points');
+			folderPoints.addColor(pointMaterial, 'color').name("Color");
+			folderPoints.add(pointMaterial, 'transparent').name("Transparent");
+			folderPoints.add(pointMaterial, 'opacity', 0, 1).name("Opacity");
+
+			const folderControls = gui.addFolder('View');
+			folderControls.add(controls, 'autoRotate').name('Auto Rotate');
+			folderControls.add(controls, 'autoRotateSpeed').name('Auto Rotation Speed');
+
+			startTime = Date.now();
+
+		}
+
+		function geoToCart(lat, lon, r) {
+			const phi = lat * Math.PI / 180;
+			const theta = (lon - 180) * Math.PI / 180;
+
+
+			const x = -r * Math.cos(phi) * Math.cos(theta);
+			const y = r * Math.cos(phi) * Math.sin(theta);
+			const z = r * Math.sin(phi);
+
+			return new THREE.Vector3(x, z, y);
+		}
+
+		function onWindowResize() {
+
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+
+			renderer.setSize(window.innerWidth, window.innerHeight);
+
+		}
+
+		function propagate(record, time) {
+			const positionAndVelocity = satellite.propagate(record, time);
+			const p = positionAndVelocity.position;
+			const d = Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
+			const gmst = satellite.gstime(time);
+			const position = satellite.eciToGeodetic(positionAndVelocity.position, gmst);
+			return geoToCart(position.latitude * 180 / Math.PI, position.longitude * 180 / Math.PI, d / 6378.173 * 100);
+		}
+
+		function animate() {
+
+			const currentTime = new Date();
+
+			requestAnimationFrame(animate);
+
+			for (let i = 0; i < satellites.length; i++) {
+				const rec = satellites[i].satrec;
+				const obj = satellites[i].object;
+				const pos = propagate(rec, currentTime);
+				obj.position.set(pos.x, pos.y, pos.z);
+				obj.lookAt(camera.position);
+			}
+
+			controls.update();
+			renderer.render(scene, camera);
+		}
+
+	</script>
+</body>
+
+</html>
