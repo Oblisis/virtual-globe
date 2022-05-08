@@ -31,6 +31,8 @@
 
 		let camera, scene, renderer, controls, startTime, object, stats, cameraControls, geometry, pointObject, trajectory, trajectoryObject;
 		let satellites = [];
+		let satellitesMesh;
+		let dummy = new THREE.Object3D();
 
 		init();
 		animate();
@@ -44,7 +46,6 @@
 			camera.position.set(0, 0, 500);
 
 			scene = new THREE.Scene();
-			// scene.background = new THREE.Color("rgb(7,14,50)");
 			scene.background = new THREE.Color("rgb(5, 10, 38)");
 
 			// Lights
@@ -82,9 +83,9 @@
 
 
 			// Geometry
-			const earthTexture = new THREE.TextureLoader().load("textures/8081_earthmap10k.jpg");
-			const earthBumpMap = new THREE.TextureLoader().load("textures/8081_earthbump10k.jpg");
-			const earthSpecularMap = new THREE.TextureLoader().load("textures/8081_earthspec10k.jpg");
+			const earthTexture = new THREE.TextureLoader().load("textures/earthmap1k.jpg");
+			const earthBumpMap = new THREE.TextureLoader().load("textures/earthbump1k.jpg");
+			const earthSpecularMap = new THREE.TextureLoader().load("textures/earthspec1k.jpg");
 
 			const material = new THREE.MeshPhongMaterial({
 				// color: "rgb(1,9,56)",
@@ -104,11 +105,9 @@
 			geometry = new THREE.SphereGeometry(sphereRadius, widthSegments, heightSegments);
 
 			object = new THREE.Mesh(geometry, material);
-			// object.castShadow = true;
 			scene.add(object);
 
 			const overlayMaterial = new THREE.MeshPhongMaterial({
-				// color: "rgb(1,9,56)",
 				color: "rgb(10,63,161)",
 				transparent: true,
 				opacity: 0.7,
@@ -129,17 +128,18 @@
 
 			]
 
+			const pointGeometry = new THREE.BufferGeometry();
+			// create a simple square shape. We duplicate the top left and bottom right
+			// vertices because each vertex needs to appear once per triangle.
+			const vertices = new Float32Array( [
+				-1.0, 0,  -1,
+				0, 2,  0,
+				1.0,  0,  -1
+			] );
 
-			const shape = new THREE.Shape();
-			const x = 0;
-			const y = 0;
-
-			const pointSize = 0.5
-			shape.moveTo(x - pointSize, y - pointSize);
-			shape.lineTo(x + pointSize, y - pointSize);
-			shape.lineTo(x, y + pointSize);
-
-			const pointGeometry = new THREE.ShapeGeometry(shape);
+			pointGeometry.setAttribute( 'position', new THREE.BufferAttribute( vertices, 3 ) );
+			pointGeometry.scale(0.5, 0.5, 0.5);
+			pointGeometry.computeVertexNormals();
 
 			const pointMaterial = new THREE.MeshBasicMaterial({
 				color: "rgb(255,179,2)",
@@ -162,16 +162,18 @@
 				function (data) {
 					// Load records
 					const records = data.split(/\r\n/);
+
+					satellitesMesh = new THREE.InstancedMesh(pointGeometry, pointMaterial, records.length / 2);
+					satellitesMesh.instanceMatrix.setUsage( THREE.DynamicDrawUsage );
+
 					for (let i = 0; i < records.length; i += 2) {
 						const satrec = satellite.twoline2satrec(records[i], records[i + 1])
-						const obj = new THREE.Mesh(pointGeometry, pointMaterial);
 						satellites.push({
 							satrec: satrec,
-							object: obj,
 							trajectoryObject: null
 						});
-						object.add(obj);
 					}
+					object.add(satellitesMesh);
 
 					// Trajectory
 					for (let j = 0; j < satellites.length; j++) {
@@ -307,12 +309,19 @@
 
 			requestAnimationFrame(animate);
 
-			for (let i = 0; i < satellites.length; i++) {
-				const rec = satellites[i].satrec;
-				const obj = satellites[i].object;
-				const pos = propagate(rec, currentTime);
-				obj.position.set(pos.x, pos.y, pos.z);
-				obj.lookAt(camera.position);
+			if (satellitesMesh) {
+				const mat = new THREE.Matrix4();
+				
+				for (let i = 0; i < satellites.length; i++) {
+					const rec = satellites[i].satrec;
+					const pos = propagate(rec, currentTime);
+					dummy.position.set(pos.x, pos.y, pos.z);
+					dummy.lookAt(camera.position);
+					dummy.updateMatrix();
+
+					satellitesMesh.setMatrixAt(i, dummy.matrix);
+				}
+				satellitesMesh.instanceMatrix.needsUpdate = true;
 			}
 
 			controls.update();
