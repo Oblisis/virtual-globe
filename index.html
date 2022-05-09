@@ -11,6 +11,8 @@
 	</style>
 </head>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.0.0/satellite.min.js"></script>
+<script src='https://unpkg.com/topojson@3.0.2/dist/topojson.js'></script>
+<script src="https://unpkg.com/axios@0.27.2/dist/axios.min.js"></script>
 
 <body>
 	<script type="importmap">
@@ -28,6 +30,7 @@
 		import { GUI } from 'https://unpkg.com/three@0.139.2/examples/jsm/libs/lil-gui.module.min.js';
 		import { ImprovedNoise } from 'https://unpkg.com/three@0.139.2/examples/jsm/math/ImprovedNoise.js';
 		import { GraticulePlane } from './js/GraticulePlane.js';
+		
 
 		let camera, scene, renderer, controls, startTime, object, stats, cameraControls, geometry, pointObject, trajectory, trajectoryObject;
 		let satellites = [];
@@ -107,12 +110,47 @@
 			object = new THREE.Mesh(geometry, material);
 			scene.add(object);
 
-			const overlayMaterial = new THREE.MeshPhongMaterial({
-				color: "rgb(10,63,161)",
-				transparent: true,
-				opacity: 0.7,
-				side: THREE.DoubleSide,
-			});
+			// const overlayMaterial = new THREE.MeshPhongMaterial({
+			// 	color: "rgb(10,63,161)",
+			// 	transparent: true,
+			// 	opacity: 0.7,
+			// 	side: THREE.DoubleSide,
+			// });
+			var overlayMaterial = new THREE.ShaderMaterial({
+                 uniforms: {
+                   vColor1: { value: new THREE.Color("rgb(10,63,161)")},
+				   vColor2: { value: new THREE.Color("rgb(5, 10, 38)")},
+                 },
+				 transparent: true,
+                 vertexShader: `
+                
+                   varying vec3 vUv; 
+				   varying vec3 vNormal; 
+                   void main() {
+                     vUv = position; 
+					 vNormal = normal;
+                  
+                     gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+                   }
+                 `,
+                 fragmentShader: `
+                    
+                   uniform vec3 vColor1;
+				   uniform vec3 vColor2;
+
+                   varying vec3 vUv;
+				   varying vec3 vNormal;
+                  
+				   void main() {
+						// y < 0 = transparent, > 1 = opaque
+						float alpha = smoothstep(0.0, 1.0, vNormal.y);
+						alpha = max(min(alpha, 0.8), 0.5);
+
+						gl_FragColor = vec4(mix(vColor1, vColor2, -vNormal.y), alpha);
+					}
+               `,
+              });
+
 			const overlayGeometry = new THREE.SphereGeometry(sphereRadius + sphereRadius * 0.01, widthSegments, heightSegments);
 			const overlayObject = new THREE.Mesh(overlayGeometry, overlayMaterial);
 			overlayObject.renderOrder = -2;
@@ -137,8 +175,9 @@
 				1.0,  0,  -1
 			] );
 
+			const pointScale = 0.7;
 			pointGeometry.setAttribute( 'position', new THREE.BufferAttribute( vertices, 3 ) );
-			pointGeometry.scale(0.5, 0.5, 0.5);
+			pointGeometry.scale(pointScale, pointScale, pointScale);
 			pointGeometry.computeVertexNormals();
 
 			const pointMaterial = new THREE.MeshBasicMaterial({
@@ -212,6 +251,24 @@
 				0.2); // Edge Opacity
 			object.add(graticule);
 
+	
+			// Geo Outlines
+			const geoMaterial = new THREE.LineBasicMaterial({
+				color: "rgb(71, 94, 255)",
+				// transparent: true,
+				// opacity: 0.2
+			})
+			
+			axios.get("https://cdn.jsdelivr.net/npm/world-atlas@2/land-50m.json")
+				.then(response => {
+					const topology = response.data;
+					const landmesh = topojson.mesh(topology, topology.objects.land);
+					const land =  geoToWireframe(landmesh, sphereRadius + 0.1, geoMaterial);
+					object.add(land);
+				})
+			
+			
+
 
 			// Renderer
 			renderer = new THREE.WebGLRenderer();
@@ -246,9 +303,9 @@
 
 			const folderOverlay = gui.addFolder('Overlay');
 			folderOverlay.add(overlayObject, 'visible').name("Visible");
-			folderOverlay.addColor(overlayMaterial, 'color').name("Color");
-			folderOverlay.add(overlayMaterial, 'opacity', 0, 1).name("Opacity");
-
+			// folderOverlay.addColor(overlayMaterial, 'color').name("Color");
+			// folderOverlay.add(overlayMaterial, 'opacity', 0, 1).name("Opacity");
+			folderOverlay.addColor(geoMaterial, 'color').name("Geo Color");
 			const folderGraticule = gui.addFolder('Graticule');
 			folderGraticule.add(graticule, 'visible').name("Visible");
 			folderGraticule.addColor(graticule.planeMaterial, 'color').name("Plane Color");
@@ -266,6 +323,7 @@
 			folderPoints.add(pointMaterial, 'opacity', 0, 1).name("Opacity");
 
 			const folderControls = gui.addFolder('View');
+			folderControls.add(camera, "fov").name('FOV').onChange((value) => camera.updateProjectionMatrix());
 			folderControls.add(controls, 'autoRotate').name('Auto Rotate');
 			folderControls.add(controls, 'autoRotateSpeed').name('Auto Rotation Speed');
 
@@ -294,6 +352,19 @@
 
 		}
 
+		function geoToWireframe(multilinestring, radius, material) {
+			const geometry = new THREE.BufferGeometry();
+			const vertices = [];
+			for (const P of multilinestring.coordinates) {
+				for (let i = 1; i < P.length; ++i) {
+					vertices.push(geoToCart(P[i-1][1], P[i-1][0], radius));
+					vertices.push(geoToCart(P[i][1], P[i][0], radius));
+				}
+			}
+			geometry.setFromPoints(vertices);
+			return new THREE.LineSegments(geometry, material);
+		}
+
 		function propagate(record, time) {
 			const positionAndVelocity = satellite.propagate(record, time);
 			const p = positionAndVelocity.position;
@@ -312,11 +383,16 @@
 			if (satellitesMesh) {
 				const mat = new THREE.Matrix4();
 				
+				var camDirection = new THREE.Vector3();
+				camera.getWorldDirection(camDirection);
 				for (let i = 0; i < satellites.length; i++) {
 					const rec = satellites[i].satrec;
 					const pos = propagate(rec, currentTime);
 					dummy.position.set(pos.x, pos.y, pos.z);
-					dummy.lookAt(camera.position);
+					// dummy.lookAt(dummy.position.clone().add(dummy.position.clone().normalize()));
+					// dummy.lookAt(camera.position);
+					
+					dummy.lookAt(dummy.position.clone().add(camDirection));
 					dummy.updateMatrix();
 
 					satellitesMesh.setMatrixAt(i, dummy.matrix);
