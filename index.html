@@ -92,8 +92,6 @@
 			const earthSpecularMap = new THREE.TextureLoader().load("textures/8081_earthspec10k.jpg");
 
 			const material = new THREE.MeshPhongMaterial({
-				// color: "rgb(1,9,56)",
-				// color: "rgb(10,63,161)",
 				shininess: 70,
 				side: THREE.DoubleSide,
 				map: earthTexture,
@@ -111,46 +109,8 @@
 			object = new THREE.Mesh(geometry, material);
 			scene.add(object);
 
-			// const overlayMaterial = new THREE.MeshPhongMaterial({
-			// 	color: "rgb(10,63,161)",
-			// 	transparent: true,
-			// 	opacity: 0.7,
-			// 	side: THREE.DoubleSide,
-			// });
-			// var overlayMaterial = new THREE.ShaderMaterial({
-			//      uniforms: {
-			//        vColor1: { value: new THREE.Color("rgb(10,63,161)")},
-			// 	   vColor2: { value: new THREE.Color("rgb(5, 10, 38)")},
-			//      },
-			// 	 transparent: true,
-			//      vertexShader: `
+			// Overlay
 
-			//        varying vec3 vUv; 
-			// 	   varying vec3 vNormal; 
-			//        void main() {
-			//          vUv = position; 
-			// 		 vNormal = normal;
-
-			//          gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
-			//        }
-			//      `,
-			//      fragmentShader: `
-
-			//        uniform vec3 vColor1;
-			// 	   uniform vec3 vColor2;
-
-			//        varying vec3 vUv;
-			// 	   varying vec3 vNormal;
-
-			// 	   void main() {
-			// 			// y < 0 = transparent, > 1 = opaque
-			// 			float alpha = smoothstep(0.0, 1.0, vNormal.y);
-			// 			alpha = max(min(alpha, 0.8), 0.5);
-
-			// 			gl_FragColor = vec4(mix(vColor1, vColor2, -vNormal.y), alpha);
-			// 		}
-			//    `,
-			//   });
 			const overlayControls = {
 				color2: new THREE.Color("rgb(5, 10, 38)"),
 				color1: new THREE.Color("rgb(87,99,188)"),
@@ -230,9 +190,9 @@
 
 			]
 
+			// Satellites
+
 			const pointGeometry = new THREE.BufferGeometry();
-			// create a simple square shape. We duplicate the top left and bottom right
-			// vertices because each vertex needs to appear once per triangle.
 			const vertices = new Float32Array([
 				-1.0, 0, -1,
 				0, 2, 0,
@@ -369,7 +329,6 @@
 
 			const folderOverlay = gui.addFolder('Overlay');
 			folderOverlay.add(overlayObject, 'visible').name("Visible");
-			// folderOverlay.addColor(overlayMaterial, 'color').name("Color");
 			folderOverlay.add(overlayControls, 'opacity', 0, 1).name("Opacity").onChange((value) => overlayMaterial.uniforms.u_opacity.value = value);
 			folderOverlay.addColor(overlayMaterial.uniforms.v_color1, 'value').name("Color 1");
 			folderOverlay.addColor(overlayMaterial.uniforms.v_color2, 'value').name("Color 2");
@@ -470,8 +429,6 @@
 					try {
 						const pos = propagate(rec, currentTime);
 						dummy.position.set(pos.x, pos.y, pos.z);
-						// dummy.lookAt(dummy.position.clone().add(dummy.position.clone().normalize()));
-						// dummy.lookAt(camera.position);
 
 						dummy.lookAt(dummy.position.clone().add(camDirection));
 						dummy.updateMatrix();
