@@ -30,11 +30,12 @@
 		import { GUI } from 'https://unpkg.com/three@0.139.2/examples/jsm/libs/lil-gui.module.min.js';
 		import { ImprovedNoise } from 'https://unpkg.com/three@0.139.2/examples/jsm/math/ImprovedNoise.js';
 		import { GraticulePlane } from './js/GraticulePlane.js';
-		
+
 
 		let camera, scene, renderer, controls, startTime, object, stats, cameraControls, geometry, pointObject, trajectory, trajectoryObject;
 		let satellites = [];
 		let satellitesMesh;
+		let lastDraw;
 		let dummy = new THREE.Object3D();
 
 		init();
@@ -116,40 +117,103 @@
 			// 	opacity: 0.7,
 			// 	side: THREE.DoubleSide,
 			// });
-			var overlayMaterial = new THREE.ShaderMaterial({
-                 uniforms: {
-                   vColor1: { value: new THREE.Color("rgb(10,63,161)")},
-				   vColor2: { value: new THREE.Color("rgb(5, 10, 38)")},
-                 },
-				 transparent: true,
-                 vertexShader: `
-                
-                   varying vec3 vUv; 
-				   varying vec3 vNormal; 
-                   void main() {
-                     vUv = position; 
-					 vNormal = normal;
-                  
-                     gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
-                   }
-                 `,
-                 fragmentShader: `
-                    
-                   uniform vec3 vColor1;
-				   uniform vec3 vColor2;
+			// var overlayMaterial = new THREE.ShaderMaterial({
+			//      uniforms: {
+			//        vColor1: { value: new THREE.Color("rgb(10,63,161)")},
+			// 	   vColor2: { value: new THREE.Color("rgb(5, 10, 38)")},
+			//      },
+			// 	 transparent: true,
+			//      vertexShader: `
 
-                   varying vec3 vUv;
-				   varying vec3 vNormal;
-                  
-				   void main() {
-						// y < 0 = transparent, > 1 = opaque
-						float alpha = smoothstep(0.0, 1.0, vNormal.y);
-						alpha = max(min(alpha, 0.8), 0.5);
+			//        varying vec3 vUv; 
+			// 	   varying vec3 vNormal; 
+			//        void main() {
+			//          vUv = position; 
+			// 		 vNormal = normal;
 
-						gl_FragColor = vec4(mix(vColor1, vColor2, -vNormal.y), alpha);
-					}
-               `,
-              });
+			//          gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+			//        }
+			//      `,
+			//      fragmentShader: `
+
+			//        uniform vec3 vColor1;
+			// 	   uniform vec3 vColor2;
+
+			//        varying vec3 vUv;
+			// 	   varying vec3 vNormal;
+
+			// 	   void main() {
+			// 			// y < 0 = transparent, > 1 = opaque
+			// 			float alpha = smoothstep(0.0, 1.0, vNormal.y);
+			// 			alpha = max(min(alpha, 0.8), 0.5);
+
+			// 			gl_FragColor = vec4(mix(vColor1, vColor2, -vNormal.y), alpha);
+			// 		}
+			//    `,
+			//   });
+			const overlayControls = {
+				color2: new THREE.Color("rgb(5, 10, 38)"),
+				color1: new THREE.Color("rgb(87,99,188)"),
+				opacity: 0.7
+			}
+
+			var overlayMaterial = new THREE.ShaderMaterial(
+				{
+					transparent: true,
+					uniforms: {
+						u_opacity: { value: overlayControls.opacity },
+						u_bias: { value: 0.1 },
+						u_scale: { value: 1.3 },
+						u_power: { value: 1.2 },
+						v_color2: { value: overlayControls.color1 },
+						v_color1: { value: overlayControls.color2 },
+
+					},
+					vertexShader: `
+						varying vec3 vPositionW;
+						varying vec3 vNormalW;
+						varying vec3 vUV;
+
+						void main() {
+							vUV = position;
+							vPositionW = vec3( vec4( position, 1.0 ) * modelMatrix);
+							vNormalW = normalize( vec3( vec4( normal, 0.0 ) * modelMatrix ));
+
+							gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+						} 
+						`,
+					fragmentShader: `
+						varying vec3 vPositionW;
+						varying vec3 vNormalW;
+						varying vec3 vUV;
+						uniform float u_opacity;
+						uniform float u_bias;
+						uniform float u_scale;
+						uniform float u_power;
+						uniform vec3 v_color1;
+				   		uniform vec3 v_color2;
+						   
+						float pcurve( float x, float a, float b) {
+							float k = pow(a+b, a+b) / (pow(a, a) * pow (b, b));
+							return k * pow(x, a) * pow(1.0 - x, b);
+
+						}
+						void main() {
+								
+							vec3 viewDirectionW = normalize(cameraPosition - vPositionW);
+							float fresnelTerm = u_bias + u_scale * pow(dot(viewDirectionW, vNormalW), u_power) ;
+							fresnelTerm = clamp(1.0 - fresnelTerm, 0., 1.);
+							vec3 color = mix(v_color1, v_color2, fresnelTerm);
+							float alpha = max(u_opacity, fresnelTerm);
+							// float alpha = pcurve(fresnelTerm, 3., 4.);
+							gl_FragColor = vec4( color,  alpha);
+
+
+						}
+						`
+				}
+			)
 
 			const overlayGeometry = new THREE.SphereGeometry(sphereRadius + sphereRadius * 0.01, widthSegments, heightSegments);
 			const overlayObject = new THREE.Mesh(overlayGeometry, overlayMaterial);
@@ -169,14 +233,14 @@
 			const pointGeometry = new THREE.BufferGeometry();
 			// create a simple square shape. We duplicate the top left and bottom right
 			// vertices because each vertex needs to appear once per triangle.
-			const vertices = new Float32Array( [
-				-1.0, 0,  -1,
-				0, 2,  0,
-				1.0,  0,  -1
-			] );
+			const vertices = new Float32Array([
+				-1.0, 0, -1,
+				0, 2, 0,
+				1.0, 0, -1
+			]);
 
 			const pointScale = 0.7;
-			pointGeometry.setAttribute( 'position', new THREE.BufferAttribute( vertices, 3 ) );
+			pointGeometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
 			pointGeometry.scale(pointScale, pointScale, pointScale);
 			pointGeometry.computeVertexNormals();
 
@@ -203,7 +267,7 @@
 					const records = data.split(/\r\n/);
 
 					satellitesMesh = new THREE.InstancedMesh(pointGeometry, pointMaterial, records.length / 2);
-					satellitesMesh.instanceMatrix.setUsage( THREE.DynamicDrawUsage );
+					satellitesMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 
 					for (let i = 0; i < records.length; i += 2) {
 						const satrec = satellite.twoline2satrec(records[i], records[i + 1])
@@ -251,23 +315,23 @@
 				0.2); // Edge Opacity
 			object.add(graticule);
 
-	
+
 			// Geo Outlines
 			const geoMaterial = new THREE.LineBasicMaterial({
 				color: "rgb(71, 94, 255)",
 				// transparent: true,
 				// opacity: 0.2
 			})
-			
+
 			axios.get("https://cdn.jsdelivr.net/npm/world-atlas@2/land-50m.json")
 				.then(response => {
 					const topology = response.data;
 					const landmesh = topojson.mesh(topology, topology.objects.land);
-					const land =  geoToWireframe(landmesh, sphereRadius + 0.1, geoMaterial);
+					const land = geoToWireframe(landmesh, sphereRadius + 0.1, geoMaterial);
 					object.add(land);
 				})
-			
-			
+
+
 
 
 			// Renderer
@@ -299,13 +363,22 @@
 			}
 
 
+
+
 			const gui = new GUI();
 
 			const folderOverlay = gui.addFolder('Overlay');
 			folderOverlay.add(overlayObject, 'visible').name("Visible");
 			// folderOverlay.addColor(overlayMaterial, 'color').name("Color");
-			// folderOverlay.add(overlayMaterial, 'opacity', 0, 1).name("Opacity");
+			folderOverlay.add(overlayControls, 'opacity', 0, 1).name("Opacity").onChange((value) => overlayMaterial.uniforms.u_opacity.value = value);
+			folderOverlay.addColor(overlayMaterial.uniforms.v_color1, 'value').name("Color 1");
+			folderOverlay.addColor(overlayMaterial.uniforms.v_color2, 'value').name("Color 2");
+			folderOverlay.add(overlayMaterial.uniforms.u_bias, 'value', 0, 1).name("Bias");
+			folderOverlay.add(overlayMaterial.uniforms.u_scale, 'value', 0, 10).name("Scale");
+			folderOverlay.add(overlayMaterial.uniforms.u_power, 'value', 0, 10).name("Power");
+
 			folderOverlay.addColor(geoMaterial, 'color').name("Geo Color");
+
 			const folderGraticule = gui.addFolder('Graticule');
 			folderGraticule.add(graticule, 'visible').name("Visible");
 			folderGraticule.addColor(graticule.planeMaterial, 'color').name("Plane Color");
@@ -357,7 +430,7 @@
 			const vertices = [];
 			for (const P of multilinestring.coordinates) {
 				for (let i = 1; i < P.length; ++i) {
-					vertices.push(geoToCart(P[i-1][1], P[i-1][0], radius));
+					vertices.push(geoToCart(P[i - 1][1], P[i - 1][0], radius));
 					vertices.push(geoToCart(P[i][1], P[i][0], radius));
 				}
 			}
@@ -374,30 +447,43 @@
 			return geoToCart(position.latitude * 180 / Math.PI, position.longitude * 180 / Math.PI, d / 6378.173 * 100);
 		}
 
+
 		function animate() {
 
 			const currentTime = new Date();
+
 
 			requestAnimationFrame(animate);
 
 			if (satellitesMesh) {
 				const mat = new THREE.Matrix4();
-				
+
+				if (lastDraw == null) {
+					lastDraw = currentTime;
+				}
+
+
 				var camDirection = new THREE.Vector3();
 				camera.getWorldDirection(camDirection);
 				for (let i = 0; i < satellites.length; i++) {
 					const rec = satellites[i].satrec;
-					const pos = propagate(rec, currentTime);
-					dummy.position.set(pos.x, pos.y, pos.z);
-					// dummy.lookAt(dummy.position.clone().add(dummy.position.clone().normalize()));
-					// dummy.lookAt(camera.position);
-					
-					dummy.lookAt(dummy.position.clone().add(camDirection));
-					dummy.updateMatrix();
+					try {
+						const pos = propagate(rec, currentTime);
+						dummy.position.set(pos.x, pos.y, pos.z);
+						// dummy.lookAt(dummy.position.clone().add(dummy.position.clone().normalize()));
+						// dummy.lookAt(camera.position);
 
-					satellitesMesh.setMatrixAt(i, dummy.matrix);
+						dummy.lookAt(dummy.position.clone().add(camDirection));
+						dummy.updateMatrix();
+
+						satellitesMesh.setMatrixAt(i, dummy.matrix);
+					} catch (exc) {
+						// console.log(exc);
+						continue;
+					}
 				}
 				satellitesMesh.instanceMatrix.needsUpdate = true;
+
 			}
 
 			controls.update();
