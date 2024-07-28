@@ -86,7 +86,7 @@ class GraticulePlane extends THREE.Group {
         // Angle Segments
         const thetaSegmentsSize = TWO_PI / (thetaSegments);
         for (let i = 0; i < thetaSegments; i++) {
-            const theta = innerRadius + thetaSegmentsSize * i;
+            const theta = thetaSegmentsSize * i;
             const points = [];
             const xi = innerRadius * Math.sin(theta);
             const yi = innerRadius * Math.cos(theta);
